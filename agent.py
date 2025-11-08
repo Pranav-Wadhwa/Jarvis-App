@@ -5,7 +5,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext, function_tool
+from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext, function_tool, inference 
 from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from zoneinfo import ZoneInfo
@@ -78,11 +78,16 @@ class GetTimeAgent(Agent):
         )
 
 
+
 async def entrypoint(ctx: agents.JobContext):
+
+    llm = inference.LLM(model="openai/gpt-4.1", provider="azure")
+    tts = inference.TTS(model="rime/mistv2", voice="geoff")
+
     session = AgentSession(
         stt="assemblyai/universal-streaming:en",
-        llm="openai/gpt-4.1",
-        tts="cartesia/sonic-3:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc",
+        llm=llm,
+        tts=tts,
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
     )
