@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,11 +17,29 @@ load_dotenv(".env.local")
 def load_instructions(filename: str) -> str:
     return Path(__file__).with_name(filename).read_text(encoding="utf-8").strip()
 
+def load_database(filename: str) -> dict[str, Any]:
+    """Load a JSON database file from the same directory as this script."""
+    file_path = Path(__file__).with_name(filename)
+    with file_path.open("r", encoding="utf-8") as f:
+        return json.load(f) 
 
 class Assistant(Agent):
     def __init__(self, **kwargs: Any) -> None:
+        # Load base instructions
+        base_instructions = load_instructions("launcher-instructions.txt")
+        
+        # Load apps database and format it
+        apps_db = load_database("apps-database.json")
+        apps_list = "\n".join(
+            f"- {app['name']}: {app['description']}"
+            for app in apps_db["apps"]
+        )
+        
+        # Combine instructions with apps database
+        full_instructions = f"{base_instructions}\n\nAvailable apps:\n{apps_list}"
+        
         super().__init__(
-            instructions=load_instructions("launcher-instructions.txt"), **kwargs
+            instructions=full_instructions, **kwargs
         )
 
     @function_tool()
