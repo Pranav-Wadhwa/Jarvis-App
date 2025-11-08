@@ -82,6 +82,7 @@ class GetTimeAgent(Agent):
 async def entrypoint(ctx: agents.JobContext):
 
     llm = inference.LLM(model="openai/gpt-4.1", provider="azure")
+    #  llm = inference.LLM(model="openai/gpt-5-mini", provider="azure", extra_kwargs={"reasoning_effort": "minimal"})
     tts = inference.TTS(model="rime/mistv2", voice="geoff")
 
     session = AgentSession(
