@@ -296,12 +296,12 @@ class AppAgent(Agent):
             csv_data = format_memories_as_csv(memories)
             instructions += f"\n\n<app_memory>\n{csv_data}</app_memory>"
         
-        # Load and append documents
-        docs_content = get_docs_content()
-        if docs_content:
-            instructions += f"\n\n<documents>\n{docs_content}</documents>"
-        
         super().__init__(instructions=instructions, **kwargs)
+
+    @function_tool()
+    async def get_docs_content(self, context: RunContext):
+        """Get the full content of all documents in the /docs folder. This should be used when an app needs to access a knowledge base to answer questions or perform tasks based on the document content."""
+        return None, get_docs_content()
 
     @function_tool()
     async def add_to_app_memory(self, context: RunContext, id: str, value: str):
