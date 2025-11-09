@@ -1,0 +1,4 @@
+This is a document about LiveKit.
+LiveKit is an open source WebRTC stack that gives you everything you need to build scalable and reliable real-time video and audio experiences in your applications.
+You can use LiveKit to add real-time data, audio, and video features to your web apps and mobile apps.
+LiveKit is used for a variety of use cases, from live streaming and video conferencing to robotics and virtual events.
