@@ -296,11 +296,6 @@ class AppAgent(Agent):
             csv_data = format_memories_as_csv(memories)
             instructions += f"\n\n<app_memory>\n{csv_data}</app_memory>"
         
-        # Load and append documents
-        docs_content = get_docs_content()
-        if docs_content:
-            instructions += f"\n\n<documents>\n{docs_content}</documents>"
-        
         super().__init__(instructions=instructions, **kwargs)
 
     @function_tool()
