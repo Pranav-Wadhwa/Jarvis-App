@@ -9,6 +9,11 @@ import base64
 import os
 import asyncio
 
+try:
+    import requests
+except ImportError:
+    requests = None
+
 from dotenv import load_dotenv
 
 from langchain_community.document_loaders import DirectoryLoader
@@ -23,7 +28,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 load_dotenv(".env.local")
 
-App = namedtuple("App", ["id", "name", "description", "system_prompt"])
+App = namedtuple("App", ["id", "name", "description"])
 
 def setup_langfuse(
     host: str | None = None, public_key: str | None = None, secret_key: str | None = None
@@ -67,8 +72,7 @@ def load_apps() -> list[App]:
                 apps.append(App(
                     id=row["id"],
                     name=row["name"],
-                    description=row.get("description", ""),
-                    system_prompt=row.get("system_prompt", "")
+                    description=row.get("description", "")
                 ))
     
     return apps
@@ -260,14 +264,13 @@ class BuilderAgent(Agent):
         # Append to CSV
         file_exists = csv_path.exists()
         with open(csv_path, "a", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["id", "name", "description", "system_prompt"])
+            writer = csv.DictWriter(f, fieldnames=["id", "name", "description"])
             if not file_exists:
                 writer.writeheader()
             writer.writerow({
                 "id": app_id,
                 "name": name,
                 "description": description,
-                "system_prompt": system_prompt,
             })
         
         # Return the AppAgent so it becomes active
@@ -311,12 +314,12 @@ class AppAgent(Agent):
             csv_data = format_memories_as_csv(memories)
             instructions += f"\n\n<app_memory>\n{csv_data}</app_memory>"
         
-        # Load and append documents
-        docs_content = get_docs_content()
-        if docs_content:
-            instructions += f"\n\n<documents>\n{docs_content}</documents>"
-        
         super().__init__(instructions=instructions, **kwargs)
+
+    @function_tool()
+    async def get_docs_content(self, context: RunContext):
+        """Get the full content of all documents in the /docs folder. This should be used when an app needs to access a knowledge base to answer questions or perform tasks based on the document content."""
+        return None, get_docs_content()
 
     @function_tool()
     async def add_to_app_memory(self, context: RunContext, id: str, value: str):
@@ -388,6 +391,53 @@ class AppAgent(Agent):
         write_memory_csv(f"app_memories/{self.app_id}.csv", memories)
         return None, f"Successfully deleted memory entry '{id}'."
 
+    @function_tool()
+    async def web_search(self, context: RunContext, query: str):
+        """Perform a web search to find current information, facts, news, or any online content. Use this tool when you need to look up information that may not be in your training data, check current events, verify facts, or find specific details about topics, people, places, or things. This is particularly useful for real-time information, recent news, current prices, weather updates, or any information that changes frequently."""
+        if requests is None:
+            return None, "Web search is not available. Please install requests: pip install requests"
+        
+        api_key = os.getenv("SERPER_API_KEY")
+        if not api_key:
+            return None, "SERPER_API_KEY environment variable is not set. Please set it to use web search."
+        
+        try:
+            url = "https://google.serper.dev/search"
+            headers = {
+                "X-API-KEY": api_key,
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "q": query,
+                "num": 5
+            }
+            
+            response = requests.post(url, headers=headers, json=payload, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            organic_results = data.get("organic", [])
+            
+            if not organic_results:
+                return None, f"No results found for query: {query}"
+            
+            # Format results
+            formatted_results = []
+            for i, result in enumerate(organic_results, 1):
+                formatted_results.append(
+                    f"{i}. Title: {result.get('title', 'N/A')}\n"
+                    f"   URL: {result.get('link', 'N/A')}\n"
+                    f"   Snippet: {result.get('snippet', 'N/A')}\n"
+                )
+            
+            result_text = "\n".join(formatted_results)
+            return None, f"Web search results for '{query}':\n\n{result_text}"
+        
+        except requests.exceptions.RequestException as e:
+            return None, f"Error performing web search: {str(e)}"
+        except Exception as e:
+            return None, f"Unexpected error during web search: {str(e)}"
+    
     async def on_enter(self) -> None:
         await self.session.generate_reply(
             instructions="Greet the user."

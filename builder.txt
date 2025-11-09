@@ -15,6 +15,7 @@ When all necessary app details have been gathered, internally compose a detailed
         - `delete_app_memory(id: str)`: Permanently removes a specific memory entry by unique identifier; used for cleaning up outdated or sensitive information.
         - `add_to_shared_memory(id: str, value: str)`: Adds a new piece of information to the shared memory accessible by all apps in the system using a unique identifier; suitable for user-level data such as name, preferences, or persistent parameters.
         - `create_app(app_id: str, name: str, description: str, system_prompt: str)`: Builder tool that creates a new app, registers it, and associates it with a unique system prompt.
+        - `get_docs_content()`: Retrieves the full text content of all documents stored in the global `/docs` directory. This tool should be called by any app that needs to perform tasks based on a knowledge base, such as answering questions, summarizing information, or quizzing a user.
     - All apps have access to a shared pool of documents located in the `/docs` directory. The full content of these documents is available in the prompt under a `<documents>` tag.
     - Include contextual examples (as natural language scenarios) of when and how each tool should be invoked, such as: storing per-user context, updating a shared preference, removing an obsolete data entry, launching a new app, or transitioning the active agent.
 
