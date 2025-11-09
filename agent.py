@@ -15,6 +15,7 @@ except ImportError:
 
 from dotenv import load_dotenv
 
+from langchain_community.document_loaders import DirectoryLoader
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext, function_tool, inference, metrics, MetricsCollectedEvent 
 from livekit.plugins import noise_cancellation, silero, deepgram, rime
@@ -132,6 +133,31 @@ def write_memory_csv(file_path: str, memories: list[dict[str, str]]) -> None:
         writer = csv.DictWriter(f, fieldnames=["id", "timestamp", "content"])
         writer.writeheader()
         writer.writerows(memories)
+
+
+_docs_content = None
+
+def get_docs_content() -> str:
+    """Load docs from the global /docs directory and cache the content."""
+    global _docs_content
+    if _docs_content is not None:
+        return _docs_content
+
+    docs_path = Path(__file__).parent / "docs"
+    
+    if not docs_path.exists() or not docs_path.is_dir():
+        _docs_content = ""
+        return _docs_content
+    
+    try:
+        loader = DirectoryLoader(str(docs_path), glob="**/*")
+        documents = loader.load()
+        _docs_content = "\n".join([d.page_content for d in documents])
+        return _docs_content
+    except Exception as e:
+        print(f"Error loading documents from /docs: {e}")
+        _docs_content = ""
+        return _docs_content
 
 
 class Assistant(Agent):
@@ -276,6 +302,11 @@ class AppAgent(Agent):
         super().__init__(instructions=instructions, **kwargs)
 
     @function_tool()
+    async def get_docs_content(self, context: RunContext):
+        """Get the full content of all documents in the /docs folder. This should be used when an app needs to access a knowledge base to answer questions or perform tasks based on the document content."""
+        return None, get_docs_content()
+
+    @function_tool()
     async def add_to_app_memory(self, context: RunContext, id: str, value: str):
         """Adds a new memory entry to this application's persistent memory storage. This allows the voice application to store and recall information across conversations and sessions. The memory system enables the application to maintain context, remember user preferences, store conversation history, and persist any data that should be available in future interactions. Each memory entry is uniquely identified by an id, allowing the application to retrieve, update, or delete specific memories later."""
         memories = load_memory(f"app_memories/{self.app_id}.csv")
@@ -402,6 +433,7 @@ class AppAgent(Agent):
 async def entrypoint(ctx: agents.JobContext):
 
     llm = inference.LLM(model="openai/gpt-4.1", provider="azure")
+#    llm = inference.LLM(model="openai/gpt-oss-120b", provider="baseten")
     #  llm = inference.LLM(model="openai/gpt-5-mini", provider="azure", extra_kwargs={"reasoning_effort": "minimal"})
  #   tts = inference.TTS(model="cartesia/sonic-3:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc")
         # Create TTS instance with Voxy's voice
@@ -446,4 +478,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    agents.cli.run_app(agents.WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            agent_name="jarvis")
+    )
