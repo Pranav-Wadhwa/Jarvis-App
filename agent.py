@@ -9,14 +9,11 @@ from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext, fu
 from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from zoneinfo import ZoneInfo
-from langchain_community.document_loaders import DirectoryLoader
-from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
-from langchain_text_splitters import CharacterTextSplitter
-import json
-import logging
 
-# Suppress noisy loggers
+import logging
+from langchain_community.document_loaders import DirectoryLoader
+import json
+
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 logging.getLogger("unstructured").setLevel(logging.ERROR)
 logging.getLogger("langchain_community").setLevel(logging.ERROR)
@@ -24,39 +21,27 @@ logging.getLogger("langchain_community").setLevel(logging.ERROR)
 
 load_dotenv(".env.local")
 
-_doc_retriever = None
+_doc_reader = None
 
 
-def get_doc_retriever():
-    global _doc_retriever
-    if _doc_retriever is None:
-        _doc_retriever = DocRetriever()
-    return _doc_retriever
+def get_doc_reader():
+    global _doc_reader
+    if _doc_reader is None:
+        _doc_reader = DocReader()
+    return _doc_reader
 
 
-class DocRetriever:
+class DocReader:
     def __init__(self):
         loader = DirectoryLoader("docs", glob="**/*")
         documents = loader.load()
-        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-        docs = text_splitter.split_documents(documents)
-        embeddings = OpenAIEmbeddings()
-        db = FAISS.from_documents(docs, embeddings)
-        self.retriever = db.as_retriever()
+        self.all_docs_content = "\n".join([d.page_content for d in documents])
 
-    def query(self, question: str) -> str:
-        print("\n\n--- RAG DIAGNOSTICS ---")
-        print(f"RAG Question from Agent: {question}")
-        docs = self.retriever.invoke(question)
-        if not docs:
-            print("RAG Context: No relevant documents found.")
-            print("---\n\n")
-            return "I couldn't find any relevant information in the documents."
-
-        context_str = "\n".join([d.page_content for d in docs])
-        print(f"RAG Context Sent to LLM:\n---\n{context_str}\n---")
+    def get_context(self) -> str:
+        print("\n\n--- DOCUMENT CONTEXT ---")
+        print(self.all_docs_content)
         print("---\n\n")
-        return context_str
+        return self.all_docs_content
 
 
 def load_instructions(filename: str) -> str:
@@ -65,49 +50,42 @@ def load_instructions(filename: str) -> str:
 
 class Assistant(Agent):
     def __init__(self, **kwargs: Any) -> None:
-        instructions_template = load_instructions("launcher-instructions.txt")
-
         with open("agents.json", "r") as f:
             agents_config = json.load(f)
-
-        static_agents = {
-            "Builder": "Use this agent to create a new voice app.",
-            "RAG": "Use this agent to answer questions about documents.",
-        }
-
-        all_agents = {**static_agents, **{name: cfg["instructions"] for name, cfg in agents_config.items()}}
         
-        agent_list_txt = "\n".join([f"- {name}: {desc}" for name, desc in all_agents.items()])
-        agent_names_txt = ", ".join(all_agents.keys())
+        agent_names = list(agents_config.keys())
+        agent_list_str = "\n".join([f"- {name}" for name in agent_names])
+        agent_names_str = ", ".join(agent_names)
 
-        instructions = instructions_template.format(
-            agent_list=agent_list_txt, agent_names=agent_names_txt
+        instructions = load_instructions("launcher-instructions.txt").format(
+            agent_list=agent_list_str,
+            agent_names=agent_names_str,
         )
 
         super().__init__(instructions=instructions, **kwargs)
 
     @function_tool()
     async def handoff(self, context: RunContext, agent_name: str):
-        """Hand off the conversation to another agent by its name."""
+        """Handoff the conversation to another agent."""
         if agent_name == "Builder":
-            return BuilderAgent(chat_ctx=self.chat_ctx), f"Ok, handing off to the {agent_name} agent."
-        
-        if agent_name == "RAG":
-            return RAGAgent(chat_ctx=self.chat_ctx), f"Ok, handing off to the {agent_name} agent."
-        
+            return BuilderAgent(chat_ctx=self.chat_ctx), "Ok, handing off to the Builder."
+
         with open("agents.json", "r") as f:
             agents_config = json.load(f)
-        
+
         if agent_name in agents_config:
-            return ConfigurableAgent(agent_name=agent_name, chat_ctx=self.chat_ctx), f"Ok, handing off to the {agent_name} agent."
-        
+            return (
+                ConfigurableAgent(agent_name=agent_name, chat_ctx=self.chat_ctx),
+                f"Ok, handing off to {agent_name}.",
+            )
+
         return None, f"I'm sorry, I don't know an agent named {agent_name}."
 
 
 class BuilderAgent(Agent):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(instructions=load_instructions("builder.txt"), **kwargs)
-        self.doc_retriever = get_doc_retriever()
+        self.doc_reader = get_doc_reader()
 
     async def on_enter(self) -> None:
         await self.session.generate_reply(
@@ -118,47 +96,17 @@ class BuilderAgent(Agent):
         )
 
     @function_tool()
-    async def search_documentation(self, context: RunContext, query: str):
-        """Search the documentation for an answer to a question that will help you build a new voice app."""
-        answer = self.doc_retriever.query(query)
+    async def get_context(self, context: RunContext):
+        """Get the full content of all documents in the /docs folder."""
+        answer = self.doc_reader.get_context()
         return None, answer
 
     @function_tool()
-    async def create_new_agent(
-        self,
-        context: RunContext,
-        name: str,
-        instructions: str,
-        tools: list[str] | None = None,
-    ):
-        """Create a new voice agent with the given name, instructions, and tools.
-        The `tools` argument must be a list containing either 'search_documentation' or 'get_current_time' or both."""
-        with open("agents.json", "r+") as f:
-            agents_config = json.load(f)
-            agents_config[name] = {
-                "instructions": instructions,
-                "tools": tools or [],
-            }
-            f.seek(0)
-            json.dump(agents_config, f, indent=4)
-            f.truncate()
-
+    async def create_new_agent(self, context: RunContext, name: str):
+        """Create a new agent based on the name provided."""
+        # In a real application, you would instantiate the new agent and add it to the session
+        # For now, we'll just return a success message.
         return None, f"Successfully created the {name} agent."
-
-
-class RAGAgent(Agent):
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(
-            instructions="You are a helpful assistant that can answer questions about documents.",
-            **kwargs,
-        )
-        self.doc_retriever = get_doc_retriever()
-
-    @function_tool()
-    async def answer_question(self, context: RunContext, question: str):
-        """Answer a question about the documents."""
-        answer = self.doc_retriever.query(question)
-        return None, answer
 
 
 class ConfigurableAgent(Agent):
@@ -169,7 +117,7 @@ class ConfigurableAgent(Agent):
         config = agents_config[agent_name]
         super().__init__(instructions=config["instructions"], **kwargs)
 
-        self.doc_retriever = get_doc_retriever()
+        self.doc_reader = get_doc_reader()
 
     async def on_enter(self) -> None:
         await self.session.generate_reply(
@@ -194,15 +142,47 @@ class ConfigurableAgent(Agent):
         return None, f"The current date and time is {timestamp}."
 
     @function_tool()
-    async def search_documentation(self, context: RunContext, query: str):
-        """Search the documentation for an answer to a question."""
-        answer = self.doc_retriever.query(query)
+    async def get_context(self, context: RunContext):
+        """Get the full content of all documents in the /docs folder."""
+        answer = self.doc_reader.get_context()
         return None, answer
+
+
+class GetTimeAgent(Agent):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(instructions=load_instructions("time-agent-instructions.txt"), **kwargs)
+
+    @function_tool()
+    async def get_current_time(self, context: RunContext, timezone: str | None = None):
+        """Return the current date and time in the requested timezone, defaulting to US Pacific."""
+        tz_name = timezone or "America/Los_Angeles"
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception as exc:  # pragma: no cover - invalid zone names handled gracefully
+            return (
+                None,
+                f"I couldn't interpret the timezone '{tz_name}'. "
+                "Please provide an IANA timezone identifier like 'America/New_York'.",
+            )
+
+        now = datetime.now(tz)
+        timestamp = now.strftime("%A, %B %d, %Y %I:%M %p %Z")
+        return None, f"The current date and time is {timestamp}."
+
+    async def on_enter(self) -> None:
+        await self.session.generate_reply(
+            instructions=(
+                "Greet the user, explain you are the GetTime agent, and mention "
+                "you report the current date and time using Pacific time unless they "
+                "ask for another timezone."
+            )
+        )
+
 
 
 async def entrypoint(ctx: agents.JobContext):
 
-    llm = inference.LLM(model="openai/gpt-4.1")
+    llm = inference.LLM(model="openai/gpt-4.1", provider="azure")
     #  llm = inference.LLM(model="openai/gpt-5-mini", provider="azure", extra_kwargs={"reasoning_effort": "minimal"})
     tts = inference.TTS(model="rime/mistv2", voice="geoff")
 
