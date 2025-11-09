@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext, function_tool, inference, metrics, MetricsCollectedEvent 
-from livekit.plugins import noise_cancellation, silero
+from livekit.plugins import noise_cancellation, silero, deepgram, rime
 from livekit.agents.telemetry import set_tracer_provider
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -168,14 +168,24 @@ async def entrypoint(ctx: agents.JobContext):
 
     llm = inference.LLM(model="openai/gpt-4.1", provider="azure")
     #  llm = inference.LLM(model="openai/gpt-5-mini", provider="azure", extra_kwargs={"reasoning_effort": "minimal"})
-    tts = inference.TTS(model="rime/mistv2", voice="geoff")
+ #   tts = inference.TTS(model="cartesia/sonic-3:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc")
+        # Create TTS instance with Voxy's voice
+    tts = rime.TTS(model="mistv2", speaker="geoff")
+
+    stt_model=deepgram.STTv2(
+        model="flux-general-en",
+        eager_eot_threshold=0.3,  # For low-latency responses 0.5 is default
+        eot_threshold=0.7,        # Standard turn detection
+        eot_timeout_ms=4000,      # Maximum wait time
+        sample_rate=16000,        # Audio sample rate
+#        keyterms=["specific", "terms"],  # Optional: improve recognition
+        )
 
     session = AgentSession(
-        stt="assemblyai/universal-streaming:en",
+        stt=stt_model,
         llm=llm,
         tts=tts,
-        vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
+        turn_detection="stt"
     )
 
 # Log metrics
