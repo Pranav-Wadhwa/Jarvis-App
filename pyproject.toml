@@ -6,4 +6,5 @@ dependencies = [
     "livekit-agents[deepgram,rime,silero,turn-detector]~=1.2",
     "livekit-plugins-noise-cancellation~=0.2",
     "python-dotenv>=1.2.1",
+    "requests>=2.31.0",
 ]

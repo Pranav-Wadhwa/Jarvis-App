@@ -584,6 +584,7 @@ dependencies = [
     { name = "livekit-agents", extra = ["deepgram", "rime", "silero", "turn-detector"] },
     { name = "livekit-plugins-noise-cancellation" },
     { name = "python-dotenv" },
+    { name = "requests" },
 ]
 
 [package.metadata]
@@ -591,6 +592,7 @@ requires-dist = [
     { name = "livekit-agents", extras = ["deepgram", "rime", "silero", "turn-detector"], specifier = "~=1.2" },
     { name = "livekit-plugins-noise-cancellation", specifier = "~=0.2" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "requests", specifier = ">=2.31.0" },
 ]
 
 [[package]]
