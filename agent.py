@@ -383,6 +383,7 @@ class AppAgent(Agent):
 async def entrypoint(ctx: agents.JobContext):
 
     llm = inference.LLM(model="openai/gpt-4.1", provider="azure")
+#    llm = inference.LLM(model="openai/gpt-oss-120b", provider="baseten")
     #  llm = inference.LLM(model="openai/gpt-5-mini", provider="azure", extra_kwargs={"reasoning_effort": "minimal"})
  #   tts = inference.TTS(model="cartesia/sonic-3:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc")
         # Create TTS instance with Voxy's voice
@@ -427,4 +428,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    agents.cli.run_app(agents.WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            agent_name="jarvis")
+    )
