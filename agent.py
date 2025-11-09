@@ -7,15 +7,19 @@ from pathlib import Path
 from typing import Any
 import base64
 import os
+import asyncio
 
 from dotenv import load_dotenv
 
 from langchain_community.document_loaders import DirectoryLoader
 from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext, function_tool, inference, metrics, MetricsCollectedEvent 
-from livekit.plugins import noise_cancellation, silero, deepgram, rime
+from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext, function_tool, inference, metrics, MetricsCollectedEvent, ChatContext, ChatMessage, BackgroundAudioPlayer, AudioConfig, BuiltinAudioClip
+from livekit.plugins import noise_cancellation, silero, deepgram, rime, openai
 from livekit.agents.telemetry import set_tracer_provider
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+
+
+
 
 load_dotenv(".env.local")
 
@@ -178,6 +182,15 @@ class Assistant(Agent):
         
         super().__init__(instructions=instructions, **kwargs)
 
+# this is a background task that says "mmhmm" every time the user completes a turn
+#    async def _say_background(self):
+#        self.session.say("Sure thing.", allow_interruptions=True)
+
+#    async def on_user_turn_completed(
+#        self, turn_ctx: RunContext, new_message: ChatMessage) -> None:
+#        asyncio.create_task(self._say_background())
+
+
     @function_tool()
     async def handoff_to_builder(self, context: RunContext):
         """Hand off the conversation to the Builder agent when the user wants to create a new app."""
@@ -210,6 +223,8 @@ class Assistant(Agent):
 class BuilderAgent(Agent):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(instructions=load_instructions("builder.txt"), **kwargs)
+
+
 
     @function_tool()
     async def create_app(
@@ -382,17 +397,17 @@ class AppAgent(Agent):
 
 async def entrypoint(ctx: agents.JobContext):
 
-    llm = inference.LLM(model="openai/gpt-4.1", provider="azure")
-#    llm = inference.LLM(model="openai/gpt-oss-120b", provider="baseten")
+#    llm = inference.LLM(model="openai/gpt-4.1", provider="azure")
+    llm = inference.LLM(model="openai/gpt-oss-120b", provider="baseten")
     #  llm = inference.LLM(model="openai/gpt-5-mini", provider="azure", extra_kwargs={"reasoning_effort": "minimal"})
  #   tts = inference.TTS(model="cartesia/sonic-3:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc")
         # Create TTS instance with Voxy's voice
     tts = rime.TTS(model="mistv2", speaker="geoff")
-
+#    llm=openai.realtime.RealtimeModel(modalities=["text"])  # OpenAI Realtime Model for text-only interactions
     stt_model=deepgram.STTv2(
         model="flux-general-en",
-        eager_eot_threshold=0.3,  # For low-latency responses 0.5 is default
-        eot_threshold=0.7,        # Standard turn detection
+        eager_eot_threshold=0.4,  # For low-latency responses 0.5 is default
+        eot_threshold=0.8,        # Standard turn detection
         eot_timeout_ms=4000,      # Maximum wait time
         sample_rate=16000,        # Audio sample rate
 #        keyterms=["specific", "terms"],  # Optional: improve recognition
@@ -421,6 +436,17 @@ async def entrypoint(ctx: agents.JobContext):
             noise_cancellation=noise_cancellation.BVC(), 
         ),
     )
+
+    # An audio player with automated ambient and thinking sounds
+    background_audio = BackgroundAudioPlayer(
+        ambient_sound=AudioConfig(BuiltinAudioClip.OFFICE_AMBIENCE, volume=0.8),
+        thinking_sound=[
+            AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING, volume=0.8),
+            AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING2, volume=0.7),
+        ],
+    )
+
+    await background_audio.start(room=ctx.room, agent_session=session)
 
     await session.generate_reply(
         instructions="Greet the user and offer your assistance."
