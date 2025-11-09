@@ -10,6 +10,7 @@ import os
 
 from dotenv import load_dotenv
 
+from langchain_community.document_loaders import DirectoryLoader
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext, function_tool, inference, metrics, MetricsCollectedEvent 
 from livekit.plugins import noise_cancellation, silero, deepgram, rime
@@ -128,6 +129,31 @@ def write_memory_csv(file_path: str, memories: list[dict[str, str]]) -> None:
         writer = csv.DictWriter(f, fieldnames=["id", "timestamp", "content"])
         writer.writeheader()
         writer.writerows(memories)
+
+
+_docs_content = None
+
+def get_docs_content() -> str:
+    """Load docs from the global /docs directory and cache the content."""
+    global _docs_content
+    if _docs_content is not None:
+        return _docs_content
+
+    docs_path = Path(__file__).parent / "docs"
+    
+    if not docs_path.exists() or not docs_path.is_dir():
+        _docs_content = ""
+        return _docs_content
+    
+    try:
+        loader = DirectoryLoader(str(docs_path), glob="**/*")
+        documents = loader.load()
+        _docs_content = "\n".join([d.page_content for d in documents])
+        return _docs_content
+    except Exception as e:
+        print(f"Error loading documents from /docs: {e}")
+        _docs_content = ""
+        return _docs_content
 
 
 class Assistant(Agent):
@@ -269,6 +295,11 @@ class AppAgent(Agent):
         if memories:
             csv_data = format_memories_as_csv(memories)
             instructions += f"\n\n<app_memory>\n{csv_data}</app_memory>"
+        
+        # Load and append documents
+        docs_content = get_docs_content()
+        if docs_content:
+            instructions += f"\n\n<documents>\n{docs_content}</documents>"
         
         super().__init__(instructions=instructions, **kwargs)
 
