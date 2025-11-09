@@ -1,6 +1,8 @@
 import csv
+import io
 import json
 from collections import namedtuple
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 import base64
@@ -67,6 +69,67 @@ def load_apps() -> list[App]:
     return apps
 
 
+def load_memory(file_path: str) -> list[dict[str, str]]:
+    """Load memory from a CSV file relative to ./data directory.
+    
+    Args:
+        file_path: Path relative to ./data (e.g., "app_memories/app_id.csv" or "shared_memory.csv")
+    
+    Returns:
+        A list of dictionaries with keys: id, timestamp, content.
+        Returns an empty list if the file doesn't exist.
+    """
+    memory_path = Path(__file__).with_name("data") / file_path
+    
+    if not memory_path.exists():
+        return []
+    
+    memories = []
+    with open(memory_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("id"):  # Skip empty rows
+                memories.append({
+                    "id": row["id"],
+                    "timestamp": row.get("timestamp", ""),
+                    "content": row.get("content", "")
+                })
+    
+    return memories
+
+
+def format_memories_as_csv(memories: list[dict[str, str]]) -> str:
+    """Format memories as CSV string.
+    
+    Args:
+        memories: List of dictionaries with keys: id, timestamp, content
+    
+    Returns:
+        CSV formatted string with header row
+    """
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=["id", "timestamp", "content"])
+    writer.writeheader()
+    writer.writerows(memories)
+    return output.getvalue()
+
+
+def write_memory_csv(file_path: str, memories: list[dict[str, str]]) -> None:
+    """Write memories to a CSV file relative to ./data directory.
+    
+    Args:
+        file_path: Path relative to ./data (e.g., "app_memories/app_id.csv" or "shared_memory.csv")
+        memories: List of dictionaries with keys: id, timestamp, content
+    """
+    memory_path = Path(__file__).with_name("data") / file_path
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(memory_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["id", "timestamp", "content"])
+        writer.writeheader()
+        writer.writerows(memories)
+
+
 class Assistant(Agent):
     def __init__(self, **kwargs: Any) -> None:
         instructions = load_instructions("launcher-instructions.txt")
@@ -81,6 +144,12 @@ class Assistant(Agent):
             f"<available_apps>\n{apps_json}\n</available_apps>"
         )
         
+        # Load and append shared memory
+        shared_memories = load_memory("shared_memory.csv")
+        if shared_memories:
+            csv_data = format_memories_as_csv(shared_memories)
+            instructions += f"\n\n<shared_memory>\n{csv_data}</shared_memory>"
+        
         super().__init__(instructions=instructions, **kwargs)
 
     @function_tool()
@@ -93,6 +162,23 @@ class Assistant(Agent):
     async def handoff_to_app(self, context: RunContext, app_id: str):
         """Hand off the conversation to the specified app agent."""
         return AppAgent(app_id=app_id, chat_ctx=self.chat_ctx), "Ok."
+
+    @function_tool()
+    async def add_to_shared_memory(self, context: RunContext, id: str, value: str):
+        """Adds a new memory entry to the shared memory storage that is accessible across all applications in the agentic voice system. Shared memory is designed for storing generic, user-level information that should be available to any application, such as the user's name, preferred language, timezone, or other universal preferences. Unlike app-specific memory, shared memory entries can be accessed and used by any application launched within the system, enabling a consistent user experience across different voice applications. This is particularly useful for information that doesn't change frequently and should persist across different application contexts."""
+        memories = load_memory("shared_memory.csv")
+        
+        # Check if id already exists
+        for memory in memories:
+            if memory["id"] == id:
+                return None, f"Shared memory entry with id '{id}' already exists."
+        
+        # Add new memory entry with current timestamp
+        timestamp = datetime.now().isoformat()
+        memories.append({"id": id, "timestamp": timestamp, "content": value})
+        write_memory_csv("shared_memory.csv", memories)
+        
+        return None, f"Successfully added shared memory entry '{id}'."
 
 
 class BuilderAgent(Agent):
@@ -113,13 +199,22 @@ class BuilderAgent(Agent):
         csv_path = data_dir / "app_definitions.csv"
         instructions_dir = data_dir / "app_system_instructions"
         instructions_path = instructions_dir / f"{app_id}.txt"
+        memories_dir = data_dir / "app_memories"
+        memory_path = memories_dir / f"{app_id}.csv"
         
-        # Create data directory and app_system_instructions directory if they don't exist
+        # Create data directory and subdirectories if they don't exist
         data_dir.mkdir(exist_ok=True)
         instructions_dir.mkdir(exist_ok=True)
+        memories_dir.mkdir(exist_ok=True)
         
         # Write system prompt file
         instructions_path.write_text(system_prompt, encoding="utf-8")
+        
+        # Create memory CSV file with headers if it doesn't exist
+        if not memory_path.exists():
+            with open(memory_path, "w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=["id", "timestamp", "content"])
+                writer.writeheader()
         
         # Append to CSV
         file_exists = csv_path.exists()
@@ -135,7 +230,7 @@ class BuilderAgent(Agent):
             })
         
         # Return the AppAgent so it becomes active
-        return AppAgent(app_id=app_id, chat_ctx=self.chat_ctx), f"Successfully created app '{name}'."
+        return AppAgent(app_id=app_id), f"Successfully created app '{name}'."
 
     async def on_enter(self) -> None:
         await self.session.generate_reply(
@@ -148,14 +243,104 @@ class BuilderAgent(Agent):
 
 class AppAgent(Agent):
     def __init__(self, app_id: str, **kwargs: Any) -> None:
+        self.app_id = app_id
+        
+        # Load app agent instructions (common to all apps)
+        app_agent_instructions = load_instructions("app_agent_instructions.txt")
+        
         # Load system prompt from data/app_system_instructions/<app_id>.txt
         instructions_path = Path(__file__).with_name("data") / "app_system_instructions" / f"{app_id}.txt"
         if instructions_path.exists():
-            instructions = instructions_path.read_text(encoding="utf-8").strip()
+            app_specific_instructions = instructions_path.read_text(encoding="utf-8").strip()
         else:
-            instructions = f"System instructions for app {app_id} not found."
+            app_specific_instructions = f"System instructions for app {app_id} not found."
+        
+        # Combine instructions: app_agent_instructions first, then app-specific instructions
+        instructions = f"{app_agent_instructions}\n\n{app_specific_instructions}" if app_agent_instructions.strip() else app_specific_instructions
+        
+        # Load and append shared memory (above app memory)
+        shared_memories = load_memory("shared_memory.csv")
+        if shared_memories:
+            csv_data = format_memories_as_csv(shared_memories)
+            instructions += f"\n\n<shared_memory>\n{csv_data}</shared_memory>"
+        
+        # Load and append app memories
+        memories = load_memory(f"app_memories/{app_id}.csv")
+        if memories:
+            csv_data = format_memories_as_csv(memories)
+            instructions += f"\n\n<app_memory>\n{csv_data}</app_memory>"
         
         super().__init__(instructions=instructions, **kwargs)
+
+    @function_tool()
+    async def add_to_app_memory(self, context: RunContext, id: str, value: str):
+        """Adds a new memory entry to this application's persistent memory storage. This allows the voice application to store and recall information across conversations and sessions. The memory system enables the application to maintain context, remember user preferences, store conversation history, and persist any data that should be available in future interactions. Each memory entry is uniquely identified by an id, allowing the application to retrieve, update, or delete specific memories later."""
+        memories = load_memory(f"app_memories/{self.app_id}.csv")
+        
+        # Check if id already exists
+        for memory in memories:
+            if memory["id"] == id:
+                return None, f"Memory entry with id '{id}' already exists. Use update_app_memory to modify it."
+        
+        # Add new memory entry with current timestamp
+        timestamp = datetime.now().isoformat()
+        memories.append({"id": id, "timestamp": timestamp, "content": value})
+        write_memory_csv(f"app_memories/{self.app_id}.csv", memories)
+        
+        return None, f"Successfully added memory entry '{id}'."
+
+    @function_tool()
+    async def add_to_shared_memory(self, context: RunContext, id: str, value: str):
+        """Adds a new memory entry to the shared memory storage that is accessible across all applications in the agentic voice system. Shared memory is designed for storing generic, user-level information that should be available to any application, such as the user's name, preferred language, timezone, or other universal preferences. Unlike app-specific memory, shared memory entries can be accessed and used by any application launched within the system, enabling a consistent user experience across different voice applications. This is particularly useful for information that doesn't change frequently and should persist across different application contexts."""
+        memories = load_memory("shared_memory.csv")
+        
+        # Check if id already exists
+        for memory in memories:
+            if memory["id"] == id:
+                return None, f"Shared memory entry with id '{id}' already exists."
+        
+        # Add new memory entry with current timestamp
+        timestamp = datetime.now().isoformat()
+        memories.append({"id": id, "timestamp": timestamp, "content": value})
+        write_memory_csv("shared_memory.csv", memories)
+        
+        return None, f"Successfully added shared memory entry '{id}'."
+
+    @function_tool()
+    async def update_app_memory(self, context: RunContext, id: str, new_value: str):
+        """Updates an existing memory entry in this application's persistent memory storage. This allows the voice application to modify previously stored information when circumstances change or when new information becomes available. The memory entry must already exist (created via add_to_app_memory) for this operation to succeed. This is useful for updating user preferences, correcting stored information, or refreshing conversation context as the interaction progresses."""
+        memories = load_memory(f"app_memories/{self.app_id}.csv")
+        
+        # Find and update the memory entry with current timestamp
+        found = False
+        timestamp = datetime.now().isoformat()
+        for memory in memories:
+            if memory["id"] == id:
+                memory["content"] = new_value
+                memory["timestamp"] = timestamp
+                found = True
+                break
+        
+        if not found:
+            return None, f"Memory entry with id '{id}' not found. Use add_to_app_memory to create it."
+        
+        write_memory_csv(f"app_memories/{self.app_id}.csv", memories)
+        return None, f"Successfully updated memory entry '{id}'."
+
+    @function_tool()
+    async def delete_app_memory(self, context: RunContext, id: str):
+        """Deletes an existing memory entry from this application's persistent memory storage. This allows the voice application to remove information that is no longer needed, incorrect, or should be forgotten. Once deleted, the memory entry cannot be retrieved, and any future references to this id will not find the previously stored information. This is useful for cleaning up outdated information, removing sensitive data, or resetting specific aspects of the application's memory."""
+        memories = load_memory(f"app_memories/{self.app_id}.csv")
+        
+        # Find and remove the memory entry
+        original_count = len(memories)
+        memories = [m for m in memories if m["id"] != id]
+        
+        if len(memories) == original_count:
+            return None, f"Memory entry with id '{id}' not found."
+        
+        write_memory_csv(f"app_memories/{self.app_id}.csv", memories)
+        return None, f"Successfully deleted memory entry '{id}'."
 
     async def on_enter(self) -> None:
         await self.session.generate_reply(
