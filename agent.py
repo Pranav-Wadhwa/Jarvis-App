@@ -11,6 +11,7 @@ import os
 from dotenv import load_dotenv
 
 from langchain_community.document_loaders import DirectoryLoader
+from langchain_community.document_loaders import UnstructuredFileLoader
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions, RunContext, function_tool, inference, metrics, MetricsCollectedEvent 
 from livekit.plugins import noise_cancellation, silero, deepgram, rime
@@ -299,9 +300,33 @@ class AppAgent(Agent):
         super().__init__(instructions=instructions, **kwargs)
 
     @function_tool()
-    async def get_docs_content(self, context: RunContext):
-        """Get the full content of all documents in the /docs folder. This should be used when an app needs to access a knowledge base to answer questions or perform tasks based on the document content."""
-        return None, get_docs_content()
+    async def list_available_docs(self, context: RunContext):
+        """List the filenames of all documents available in the /docs directory."""
+        docs_path = Path(__file__).parent / "docs"
+        if not docs_path.exists() or not docs_path.is_dir():
+            return None, "There are no documents available."
+        
+        files = [f.name for f in docs_path.iterdir() if f.is_file()]
+        if not files:
+            return None, "There are no documents available."
+        
+        return None, "The following documents are available:\n" + "\n".join(files)
+
+    @function_tool()
+    async def get_doc_by_filename(self, context: RunContext, filename: str):
+        """Read the content of a specific file from the /docs directory."""
+        docs_path = Path(__file__).parent / "docs"
+        file_path = docs_path / filename
+
+        if not file_path.exists() or not file_path.is_file():
+            return None, f"The file '{filename}' was not found."
+
+        try:
+            loader = UnstructuredFileLoader(str(file_path))
+            docs = loader.load()
+            return None, "\n".join([doc.page_content for doc in docs])
+        except Exception as e:
+            return None, f"Error reading file '{filename}': {e}"
 
     @function_tool()
     async def add_to_app_memory(self, context: RunContext, id: str, value: str):
