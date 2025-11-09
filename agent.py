@@ -304,6 +304,11 @@ class AppAgent(Agent):
         super().__init__(instructions=instructions, **kwargs)
 
     @function_tool()
+    async def get_docs_content(self, context: RunContext):
+        """Get the full content of all documents in the /docs folder. This should be used when an app needs to access a knowledge base to answer questions or perform tasks based on the document content."""
+        return None, get_docs_content()
+
+    @function_tool()
     async def add_to_app_memory(self, context: RunContext, id: str, value: str):
         """Adds a new memory entry to this application's persistent memory storage. This allows the voice application to store and recall information across conversations and sessions. The memory system enables the application to maintain context, remember user preferences, store conversation history, and persist any data that should be available in future interactions. Each memory entry is uniquely identified by an id, allowing the application to retrieve, update, or delete specific memories later."""
         memories = load_memory(f"app_memories/{self.app_id}.csv")
