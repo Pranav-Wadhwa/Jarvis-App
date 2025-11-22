@@ -1,0 +1,20 @@
+[project]
+name = "jarvis-app"
+version = "0.1.0"
+description = "LiveKit Agents App"
+dependencies = [
+    "livekit-agents[openai,silero,turn-detector]~=1.2",
+    "livekit-plugins-noise-cancellation~=0.2",
+    "python-dotenv>=1.2.1",
+    "requests>=2.31.0",
+    "langchain-community>=0.2",
+    "unstructured[csv]>=0.14",
+    "langchain>=0.2",
+    "deepgram-sdk",
+    "livekit-plugins-deepgram",
+    "livekit-plugins-rime",
+    "livekit-plugins-openai",
+]
+
+[tool.uv]
+python = "3.11"
